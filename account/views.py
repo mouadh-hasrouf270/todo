@@ -1,40 +1,25 @@
 from django.shortcuts import render
-from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth import get_user_model, authenticate,logout
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from .serializers import SingUpSerializers, ClientSerializer, RestaurantSerializer, DeliverySerializer, MenuItemSerializer
+from .serializers import SingUpSerializers, ClientSerializer, RestaurantSerializer, DeliverySerializer, MenuItemSerializer,OrderSerializer,OrderItemSerializer
 from django.contrib.auth.hashers import make_password
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Client, Restaurant, Delivery, MenuItem
+from .models import Client, Restaurant, Delivery, MenuItem,MenuList,Order,OrderItem
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import login as auth_login
 from django.db.models import Q
+from decimal import Decimal
+from django.db import transaction
+
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
-def register(request):
-    User = get_user_model()
-    data= request.data
-    user=SingUpSerializers(data=data)
-    if user.is_valid():
-        if not User.objects.filter(username=data['email']).exists():
-            user = User.objects.create(
-                username = data['username'],
-                last_name=data['last_name'],
-                email=data['email'],
-                role=data['role'],
-                password=make_password(data['password']),
-            )
-            return Response({'detail':'Your acount registred'},
-                            status=status.HTTP_201_CREATED)
-        else:
-            return Response(
-                {'error': 'this exail already exist'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-    else:
-        return Response(user.errors)
+@permission_classes([IsAuthenticated])
+def logout_users(request):
+    request.user.auth_token.delete()
+    return Response({"message": "Successfully logged out."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -305,7 +290,7 @@ def search_restaurants(request):
     }, status=status.HTTP_200_OK)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+#@permission_classes([IsAuthenticated])
 def get_restaurant_menu(request, restaurant_id):
     """
     Get all menu items for a specific restaurant.
@@ -340,7 +325,7 @@ def get_restaurant_menu(request, restaurant_id):
         )
     
     # Get all menu items from the restaurant's menu list
-    menu_items = restaurant.menu_list.items.filter(is_available=True)
+    menu_items = restaurant.menu_list.items.all()
     
     if not menu_items.exists():
         return Response(
@@ -371,48 +356,29 @@ def get_restaurant_menu(request, restaurant_id):
 @api_view(['POST'])
 #@permission_classes([IsAuthenticated])
 def add_menu_item(request):
-    # Check if the authenticated user is a restaurant
     user = request.user
-    
-    # Debug information
-    print(f"User: {user}, Type: {type(user)}, ID: {user.id}, Authenticated: {user.is_authenticated}")
-    
-    """if user.role != 'restaurant':
-        return Response(
-            {'error': 'Only restaurant accounts can add menu items'},
-            status=status.HTTP_403_FORBIDDEN
-        )"""
-    
-    # Get the restaurant profile - change how we query
+    if user.role != 'restaurant':
+        return Response({'error': 'Only restaurants can add menu items.'}, status=status.HTTP_403_FORBIDDEN)
+
     try:
-        restaurant = Restaurant.objects.get(user_id=user.id)  # Use user_id explicitly
+        restaurant = Restaurant.objects.get(user=user)
     except Restaurant.DoesNotExist:
-        return Response(
-            {'error': 'Restaurant profile not found for this user'},
-            status=status.HTTP_404_NOT_FOUND
-        )
-    
-    # Get data for the new menu item
-    data = request.data.copy()  # Create a mutable copy
-    
-    # Check if restaurant has a menu_list
-    if not hasattr(restaurant, 'menu_list') or restaurant.menu_list is None:
-        return Response(
-            {'error': 'Menu list not found for this restaurant'},
-            status=status.HTTP_404_NOT_FOUND
-        )
-    
-    # Add restaurant's menu list reference to the data
-    data['menu_list'] = restaurant.menu_list.id
-    
-    # Create the menu item
+        return Response({'error': 'Restaurant not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    menu_list = restaurant.menu_list
+    if not menu_list:
+        menu_list = MenuList.objects.create(name=f"{restaurant.user.full_name} menu")
+        restaurant.menu_list = menu_list
+        restaurant.save()
+
+    data = request.data.copy()
+    data['menu_list'] = menu_list.id  # Assign menu_list ID directly
+
     serializer = MenuItemSerializer(data=data)
     if serializer.is_valid():
         menu_item = serializer.save()
-        return Response({
-            'detail': 'Menu item added successfully',
-            'menu_item': serializer.data
-        }, status=status.HTTP_201_CREATED)
+        menu_list.items.add(menu_item)  # Ensure it's added to the chosen items
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
     else:
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 @api_view(['PUT'])
@@ -446,13 +412,6 @@ def update_menu_item(request, item_id):
         return Response(
             {'error': f'Menu item with ID {item_id} does not exist'},
             status=status.HTTP_404_NOT_FOUND
-        )
-    
-    # Check if the menu item belongs to this restaurant
-    if menu_item.menu_list != restaurant.menu_list:
-        return Response(
-            {'error': 'You do not have permission to update this menu item'},
-            status=status.HTTP_403_FORBIDDEN
         )
     
     # Update the menu item
@@ -499,12 +458,6 @@ def delete_menu_item(request, item_id):
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Check if the menu item belongs to this restaurant
-    if menu_item.menu_list != restaurant.menu_list:
-        return Response(
-            {'error': 'You do not have permission to delete this menu item'},
-            status=status.HTTP_403_FORBIDDEN
-        )
     
     # Delete the menu item
     menu_item.delete()
@@ -524,3 +477,144 @@ def show_restaurant(request,item_id):
     restaurants = Restaurant.objects.get(restaurant_id=item_id)
     serializer = RestaurantSerializer(restaurants)
     return Response(serializer.data)
+@api_view(['POST'])
+#@permission_classes([IsAuthenticated])
+def add_order(request):
+    user = request.user
+    if user.role != 'client':
+        return Response({'error': 'Only clients can place orders.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        client = Client.objects.get(user=user)
+    except Client.DoesNotExist:
+        return Response({'error': 'Client not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        restaurant_user = request.data.get('restaurant_id')
+        restaurant = Restaurant.objects.get(restaurant_id=restaurant_user)
+    except Restaurant.DoesNotExist:
+        return Response({'error': 'Restaurant not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    items_data = request.data.get('items')
+    if not items_data or not isinstance(items_data, list):
+        return Response({'error': 'Items must be a list of objects with item_id and quantity.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    total_price = 0
+    order_items = []
+
+    # Validate items first
+    for entry in items_data:
+        item_id = entry.get('item_id')
+        quantity = int(entry.get('quantity', 1))
+        try:
+            item = MenuItem.objects.get(id=item_id)
+            total_price += item.price * quantity
+            order_items.append((item, quantity))
+        except MenuItem.DoesNotExist:
+            return Response({'error': f'Menu item with id {item_id} not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Create order
+    order = Order.objects.create(
+        client=client,
+        restaurant=restaurant,
+        total_price=total_price,
+        status='confirmed'
+    )
+
+    # Add order items
+    for item, quantity in order_items:
+        OrderItem.objects.create(
+            order=order,
+            item=item,
+            quantity=quantity,
+            price=item.price
+        )
+
+    serializer = OrderSerializer(order)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+@api_view(['POST'])
+#@permission_classes([IsAuthenticated])
+def mark_order_ready(request, order_id):
+    try:
+        user = request.user
+        restaurant = Restaurant.objects.get(user=user)
+    except Restaurant.DoesNotExist:
+        return Response({'error': 'Restaurant not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        order = Order.objects.get(order_id=order_id, restaurant=restaurant)
+    except Order.DoesNotExist:
+        return Response({'error': 'Order not found or not associated with your restaurant.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if order.status != 'confirmed':
+        return Response({'error': 'Only confirmed orders can be marked as ready.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    order.status = 'ready'
+    order.save()
+
+    return Response({'message': f"Order {order.order_id} marked as ready."}, status=status.HTTP_200_OK)
+@api_view(['GET'])
+#@permission_classes([IsAuthenticated])
+def restaurant_orders(request):
+    user = request.user
+    if user.role != 'restaurant':
+        return Response({'error': 'Only restaurants can view their orders.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        restaurant = Restaurant.objects.get(user=user)
+    except Restaurant.DoesNotExist:
+        return Response({'error': 'Restaurant not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    orders = Order.objects.filter(restaurant=restaurant).order_by('-created_at')
+    serializer = OrderSerializer(orders, many=True)
+
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+# @permission_classes([IsAuthenticated])
+def ready_orders_for_delivery(request):
+    user = request.user
+    if user.role != 'delivery':
+        return Response({'error': 'Only delivery personnel can view ready orders.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        delivery_person = Delivery.objects.get(user=user)
+    except Delivery.DoesNotExist:
+        return Response({'error': 'Delivery profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Get all orders with status "ready" and no delivery assigned yet
+    ready_orders = Order.objects.filter(status='ready', delivery__isnull=True).order_by('-created_at')
+
+    serializer = OrderSerializer(ready_orders, many=True)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['POST'])
+# @permission_classes([IsAuthenticated])
+def pickup_order(request, order_id):
+    user = request.user
+    if user.role != 'delivery':
+        return Response({'error': 'Only delivery personnel can pick up orders.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        delivery_person = Delivery.objects.get(user=user)
+    except Delivery.DoesNotExist:
+        return Response({'error': 'Delivery profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        order = Order.objects.get(order_id=order_id)
+    except Order.DoesNotExist:
+        return Response({'error': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if order.status != 'ready':
+        return Response({'error': 'Only ready orders can be picked up.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if order.delivery is not None:
+        return Response({'error': 'This order has already been assigned to a delivery person.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Assign delivery and mark as delivered
+    order.delivery = delivery_person
+    order.status = 'delivered'
+    order.save()
+
+    return Response({'message': f"Order {order.order_id} marked as delivered and assigned to you."}, status=status.HTTP_200_OK)
