@@ -13,6 +13,8 @@ from django.contrib.auth import login as auth_login
 from django.db.models import Q
 from decimal import Decimal
 from django.db import transaction
+from django.core.mail import send_mail
+from notifications.models import Notification
 
 
 @api_view(['POST'])
@@ -61,6 +63,13 @@ def client_signup(request):
             'phone_number': data.get('phone_number'),
             'email': data.get('email'),
         }
+        send_mail(
+                subject='Welcome to Our Delivery Platform',
+                message='Hello, your client account has been created successfully!',
+                from_email=None,  # use DEFAULT_FROM_EMAIL
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
         
         client_serializer = ClientSerializer(data=client_data)
         if client_serializer.is_valid():
@@ -117,6 +126,13 @@ def restaurant_signup(request):
             'email': data.get('email'),
             'is_available': True,
         }
+        send_mail(
+                subject='Welcome to Our Delivery Platform',
+                message='Hello, your restaurant account has been created successfully!',
+                from_email=None,  # use DEFAULT_FROM_EMAIL
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
         
         restaurant_serializer = RestaurantSerializer(data=restaurant_data)
         if restaurant_serializer.is_valid():
@@ -174,6 +190,13 @@ def delivery_signup(request):
             'is_available': True,
             'vehicle_type': data.get('vehicle_type'),
         }
+        send_mail(
+                subject='Welcome to Our Delivery Platform',
+                message='Hello, your delivery account has been created successfully!',
+                from_email=None,  # use DEFAULT_FROM_EMAIL
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
         
         delivery_serializer = DeliverySerializer(data=delivery_data)
         if delivery_serializer.is_valid():
@@ -552,6 +575,10 @@ def mark_order_ready(request, order_id):
 
     order.status = 'ready'
     order.save()
+    Notification.objects.create(
+    user=order.client.user,
+    message=f'Your order #{order.order_id} status changed to "{order.status}"'
+)
 
     return Response({'message': f"Order {order.order_id} marked as ready."}, status=status.HTTP_200_OK)
 @api_view(['GET'])
@@ -616,5 +643,9 @@ def pickup_order(request, order_id):
     order.delivery = delivery_person
     order.status = 'delivered'
     order.save()
+    Notification.objects.create(
+    user=order.client.user,
+    message=f'Your order #{order.order_id} status changed to "{order.status}"'
+)
 
     return Response({'message': f"Order {order.order_id} marked as delivered and assigned to you."}, status=status.HTTP_200_OK)

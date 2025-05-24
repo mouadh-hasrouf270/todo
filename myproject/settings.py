@@ -43,6 +43,8 @@ INSTALLED_APPS = [
     'account',
     'notifications',
     'django_filters',
+    'chat',
+    'channels',
 ]
 
 MIDDLEWARE = [
@@ -138,3 +140,19 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.AllowAny',
     ],
 }
+ASGI_APPLICATION = "myproject.routing.application"
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    },
+}
+MEDIA_URL = '/menu_items/'
+MEDIA_ROOT = BASE_DIR / 'menu_items'
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_HOST_USER = 'ma.hasrouf@esi-sba.dz'
+EMAIL_HOST_PASSWORD = 'fyat kgcf pebd baxw'
+EMAIL_USE_TLS = True
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
