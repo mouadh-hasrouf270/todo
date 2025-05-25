@@ -649,3 +649,110 @@ def pickup_order(request, order_id):
 )
 
     return Response({'message': f"Order {order.order_id} marked as delivered and assigned to you."}, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+#@permission_classes([IsAuthenticated])
+def orders_for_delivery_person(request):
+    user = request.user
+    
+    if user.role != 'delivery':
+        return Response({'error': 'Only delivery personnel can access this endpoint.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        delivery_person = Delivery.objects.get(user=user)
+    except Delivery.DoesNotExist:
+        return Response({'error': 'Delivery profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Get all orders assigned to this delivery person
+    orders = Order.objects.filter(delivery=delivery_person).order_by('-created_at')
+
+    serializer = OrderSerializer(orders, many=True)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+#@permission_classes([IsAuthenticated])
+def orders_for_client_hestory(request):
+    user = request.user
+    
+    if user.role != 'client':
+        return Response({'error': 'Only client personnel can access this endpoint.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        client_person = Client.objects.get(user=user)
+    except Client.DoesNotExist:
+        return Response({'error': 'client profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Get all orders assigned to this delivery person
+    orders = Order.objects.filter(client=client_person).order_by('-created_at')
+
+    serializer = OrderSerializer(orders, many=True)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def edit_client_profile(request):
+    user = request.user
+
+    if user.role != 'client':
+        return Response({'error': 'Only clients can edit their profile.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        client = Client.objects.get(user=user)
+    except Client.DoesNotExist:
+        return Response({'error': 'Client profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = ClientSerializer(client, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response({
+            'detail': 'Client profile updated successfully',
+            'client': serializer.data
+        }, status=status.HTTP_200_OK)
+    
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def edit_restaurant_profile(request):
+    user = request.user
+
+    if user.role != 'restaurant':
+        return Response({'error': 'Only restaurant users can edit their profile.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        restaurant = Restaurant.objects.get(user=user)
+    except Restaurant.DoesNotExist:
+        return Response({'error': 'Restaurant profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = RestaurantSerializer(restaurant, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response({
+            'detail': 'Restaurant profile updated successfully',
+            'restaurant': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def edit_delivery_profile(request):
+    user = request.user
+
+    if user.role != 'delivery':
+        return Response({'error': 'Only delivery users can edit their profile.'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        delivery = Delivery.objects.get(user=user)
+    except Delivery.DoesNotExist:
+        return Response({'error': 'Delivery profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = DeliverySerializer(delivery, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response({
+            'detail': 'Delivery profile updated successfully',
+            'delivery': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

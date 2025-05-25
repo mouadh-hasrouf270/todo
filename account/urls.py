@@ -19,5 +19,9 @@ urlpatterns = [
     path('orders/restaurant/', views.restaurant_orders, name='restaurant_orders'),
     path('orders/delivery/', views.ready_orders_for_delivery, name='delivery_orders'),
     path('orders/<order_id>/pickup/', views.pickup_order, name='delivery_orders'),
-    
+    path('orders/delivery/history/', views.orders_for_delivery_person, name='delivery_orders_history'),
+    path('orders/client/history/', views.orders_for_client_hestory, name='client_orders_history'),
+    path('edit/client/', views.edit_client_profile, name='edit_client'),
+    path('edit/restaurant/', views.edit_restaurant_profile, name='edit_restaurant'),
+    path('edit/delivery/', views.edit_delivery_profile, name='edit_delivery'),
 ]
